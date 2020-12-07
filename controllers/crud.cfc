@@ -129,7 +129,7 @@ component accessors=true {
     // exit controller on non crud items
     switch ( variables.framework.getSection( ) ) {
       case "main":
-        var dashboard = lCase( reReplace( rc.auth.role.name, '\W+', '-', 'all' ) );
+        var dashboard = lCase( reReplace( rc.auth?.role?.name, '\W+', '-', 'all' ) );
 
         if ( utilityService.fileExistsUsingCache( root & "/views/main/dashboard-#dashboard#.cfm" ) ) {
           variables.framework.setView( '.dashboard-#dashboard#' );

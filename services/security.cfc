@@ -67,42 +67,87 @@ component accessors=true {
 
   public void function refreshSession( component user ) {
     if ( isNull( user ) ) {
-      var currentAuth = getAuth( );
+      var currentAuth = getAuth();
 
       if ( utilityService.isGuid( currentAuth.userId ) ) {
-        user = entityLoadByPK( "contact", currentAuth.userId );
+        user = entityLoadByPK( 'contact', currentAuth.userId );
       }
     } else {
       entityReload( user );
     }
 
-    createSession( );
+    createSession();
 
     var tempAuth = {
-      "isLoggedIn" = true,
-      "user" = dataService.processEntity( user, 0, 1, false ),
-      "userid" = user.getID( )
+      'isLoggedIn' = true,
+      'user' = dataService.processEntity( user, 0, 1, false ),
+      'userid' = user.getID(),
+      'role' = {}
     };
 
     if ( structKeyExists( user, 'getSecurityRole' ) ) {
       var securityRole = user.getSecurityRole();
 
       if ( isNull( securityRole ) ) {
-        throw( "No security role for this user, or no security role name set.", "securityService.refreshSession" );
+        throw( 'No security role for this user, or no security role name set.', 'securityService.refreshSession' );
       }
 
-      tempAuth[ "role" ] = dataService.processEntity( securityRole, 0, 1, false );
+      tempAuth[ 'role' ] = dataService.processEntity( securityRole, 0, 1, false );
 
       if ( isAdmin( tempAuth.role.name ) ) {
-        tempAuth.role.can = yesWeCan;
+        tempAuth.role[ 'can' ] = yesWeCan;
       } else {
         cachePermissions( tempAuth.role.permissions );
-        tempAuth.role.can = this.can;
+        tempAuth.role[ 'can' ] = this.can;
       }
+
+      // forwards compatibility (move can to main struct, since from now on we support more than one role):
+      tempAuth[ 'can' ] = tempAuth.role.can;
+      tempAuth[ 'menulist' ] = tempAuth.role.menulist;
+    } else if ( structKeyExists( user, 'getSecurityRoles' ) ) {
+      tempAuth[ 'canAccessAdmin' ] = false;
+      tempAuth[ 'can' ] = this.can;
+      tempAuth[ 'menulist' ] = [];
+
+      entityLoad( 'securityrole' ).each( function( securityrole ) {
+        tempAuth[ 'is#securityrole.getName()#' ] = false;
+      } );
+
+      tempAuth[ 'roles' ] = user.getSecurityRoles().map( function( assignment ) {
+        var securityrole = assignment.getSecurityRole();
+        var assignmentStruct = dataService.processEntity( securityrole, 0, 2, false );
+
+        param assignmentStruct.canAccessAdmin = false;
+
+        tempAuth[ 'is#securityrole.getName()#' ] = true;
+
+        if ( assignmentStruct.canAccessAdmin ) {
+          tempAuth[ 'canAccessAdmin' ] = true;
+        }
+
+        // merge and de-duplicate menuitems
+        tempAuth.menulist = tempAuth.menulist.merge( assignmentStruct.menulist.listToArray() ).filter(
+          function( value, index, self ) {
+            return self.find( value ) == index;
+          }
+        );
+
+        assignmentStruct[ 'permissions' ] = assignmentStruct.permissions.map( function( permission ) {
+          return permission.permission;
+        } );
+
+        assignmentStruct.delete( 'contact' );
+        assignmentStruct.delete( 'securityroles' );
+
+        return assignmentStruct;
+      } );
+
+      tempAuth.menulist = tempAuth.menulist.toList();
+
+      cacheMultiRolePermissions( tempAuth.roles );
     }
 
     structAppend( session.auth, tempAuth, true );
-
     sessionRotate();
   }
 
@@ -128,7 +173,6 @@ component accessors=true {
       var bcrypt = getBCrypt();
       return bcrypt.checkpw( password, storedPW );
     } catch ( any e ) {
-      writeDump( e );abort;
       try {
         // THEN TRY THE OLD SHA-512 WAY:
         var storedsalt = right( storedPW, 16 );
@@ -153,18 +197,19 @@ component accessors=true {
   }
 
   public boolean function can( string action = '', string section = '' ) {
-    if ( !structKeyExists( session, 'auth' ) ) {
+    if ( !session.keyExists( 'auth' ) ) {
       // not logged in
       return false;
     }
 
     param session.can = {};
+    param session.auth.canAccessAdmin = false;
+    param session.auth.role.canAccessAdmin = false;
 
-    if ( !isBoolean( session.auth.role.canAccessAdmin ) ) {
-      session.auth.role.canAccessAdmin = false;
-    }
+    if ( !isBoolean( session.auth.canAccessAdmin ) ) session.auth.canAccessAdmin = false;
+    if ( !isBoolean( session.auth.role.canAccessAdmin ) ) session.auth.role.canAccessAdmin = false;
 
-    return structKeyExists( session.can, '#action#-#section#' ) || session.auth.role.canAccessAdmin;
+    return structKeyExists( session.can, '#action#-#section#' ) || session.auth.canAccessAdmin || session.auth.role.canAccessAdmin;
   }
 
   public boolean function canIgnoreSecurity( string subsystem="",
@@ -203,6 +248,30 @@ component accessors=true {
 
   // private
 
+  private void function cacheMultiRolePermissions( required array securityRoleAssignments ) {
+    var actions = [
+      'view',
+      'change',
+      'delete',
+      'execute',
+      'create'
+    ];
+    var cachedPermissions = {};
+
+    securityRoleAssignments.each( function( assignment ) {
+      param assignment.permissions = [];
+      assignment.permissions.each( function( permission ) {
+        actions.each( function( action ) {
+          if ( permission.keyExists( action ) && isBoolean( permission[ action ] ) && permission[ action ] ) {
+            cachedPermissions[ '#action#-#permission.section#' ] = true;
+          }
+        } );
+      } );
+    } );
+
+    session.can = cachedPermissions;
+  }
+
   private void function cachePermissions( required array allPermissions ) {
     var cachedPermissions = { };
 
@@ -210,6 +279,7 @@ component accessors=true {
       if ( !structKeyExists( permission, "section" ) || !len( trim( permission.section ) ) ) {
         continue;
       }
+
       for ( var action in [ "view", "change", "delete", "execute", "create" ] ) {
         if ( structKeyExists( permission, action ) &&
                    isBoolean( permission[ action ] ) &&

@@ -253,7 +253,7 @@ component {
     }
   }
 
-  public void function addToJavapaths( javaSettings, absolutePath ) {
+  public void function addToJavaPaths( javaSettings, absolutePath ) {
     param javaSettings.loadPaths = [];
 
     var existingFileNames = javaSettings.loadPaths.map( function( path ) {

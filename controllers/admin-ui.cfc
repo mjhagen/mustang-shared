@@ -46,8 +46,8 @@ component accessors=true {
       if ( reload ) {
         rc.subnav = "";
 
-        if ( rc.auth.isLoggedIn && !isNull( rc.auth.role.menulist ) ) {
-          var roleSubnav = rc.auth.role.menulist;
+        if ( rc.auth.isLoggedIn && !isNull( rc.auth.menulist ) ) {
+          var roleSubnav = rc.auth.menulist;
         }
 
         if ( isNull( roleSubnav ) ) {
